@@ -1,0 +1,18 @@
+# 统一用 LF，避免跨平台换行符差异
+* text=auto eol=lf
+
+# 明确声明语言
+*.html  text eol=lf
+*.js    text eol=lf
+*.css   text eol=lf
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+
+# VBS 必须是 UTF-16LE + CRLF 且带 BOM，禁止 git 做任何换行转换
+*.vbs   -text
+
+# 图片
+*.png   binary
+*.jpg   binary
+*.ico   binary

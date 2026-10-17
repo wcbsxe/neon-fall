@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>engine test</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}</style>
+</head>
+<body>
+<canvas id="game" width="1024" height="700"></canvas>
+<script src="../game.js"></script>
+<script>
+// 引擎单元自检。fillRow(r, holes)：holes 里的列留空，其余填满。
+(function () {
+  const api = window.__NEON_FALL__;
+  const G = api.G;
+  const COLS = 10, BUF = 2, TOTAL = G.board.length;
+  const R = [];
+  const ok = (name, cond, extra) => R.push((cond ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' :: ' + extra : ''));
+
+  const clearBoard = () => { for (let r = 0; r < TOTAL; r++) for (let c = 0; c < COLS; c++) G.board[r][c] = null; };
+  const fillRow = (r, holes) => { for (let c = 0; c < COLS; c++) G.board[r][c] = (!holes || holes.indexOf(c) < 0) ? 'I' : null; };
+  const flush = () => { let g = 0; while (G.clearing && g++ < 20) api.finishClear(); };
+  const V_I = [[1,0,0,0],[1,0,0,0],[1,0,0,0],[1,0,0,0]];
+  const H_I = [[1,1,1,1],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+  const O2  = [[1,1],[1,1]];
+
+  try {
+    api.startGame();
+    ok('startGame -> play', api.mode === 'play', api.mode);
+    ok('board dimensions', G.board.length === TOTAL && G.board[0].length === COLS, G.board.length + 'x' + G.board[0].length);
+    ok('rows = visible 20 + buffer 2', TOTAL === 22 && BUF === 2, TOTAL);
+
+    // 1. 单消：底行只缺 6-9 四列，横 I 正好补满且只占这一行
+    api.startGame(); clearBoard();
+    fillRow(TOTAL - 1, [6, 7, 8, 9]);
+    G.cur = { type: 'I', m: H_I, x: 6, y: TOTAL - 1, n: 4 };
+    const s0 = api.score;
+    api.hardDrop();
+    const armed1 = !!G.clearing && G.clearing.rows.length === 1;
+    flush();
+    ok('single: clear armed 1 row', armed1, 'rows=' + (armed1 ? JSON.stringify([TOTAL - 1]) : 'null'));
+    ok('single: lines == 1', G.lines === 1, 'lines=' + G.lines);
+    ok('single: score +100', api.score - s0 >= 100, 'delta=' + (api.score - s0));
+    ok('single: cleared row gone, board empty', G.board.every(row => row.every(v => v === null)),
+       'leftover=' + G.board.reduce((a, r) => a + r.filter(Boolean).length, 0));
+
+    // 2. 四消 TETRIS：底 4 行各缺第 4 列，竖 I 一次补满 4 行
+    api.startGame(); clearBoard();
+    for (let i = 1; i <= 4; i++) fillRow(TOTAL - i, [4]);
+    G.cur = { type: 'I', m: V_I, x: 4, y: TOTAL - 5, n: 4 };
+    const s1 = api.score;
+    api.hardDrop();
+    const armed4 = !!G.clearing && G.clearing.rows.length === 4;
+    flush();
+    ok('tetris: clear armed 4 rows', armed4, G.clearing ? JSON.stringify(G.clearing.rows) : 'null');
+    ok('tetris: lines == 4', G.lines === 4, 'lines=' + G.lines);
+    ok('tetris: score >= 800 (base 800 x lv1)', api.score - s1 >= 800, 'delta=' + (api.score - s1));
+    ok('tetris: board empty after 4 clears', G.board.every(row => row.every(v => v === null)),
+       'leftover=' + G.board.reduce((a, r) => a + r.filter(Boolean).length, 0));
+
+    // 3. 消行后上方残留整体下移
+    api.startGame(); clearBoard();
+    fillRow(TOTAL - 1, [0]);
+    G.board[TOTAL - 3][9] = 'T';
+    G.cur = { type: 'I', m: V_I, x: 0, y: TOTAL - 5, n: 4 };
+    api.hardDrop(); flush();
+    ok('shift: survivor falls one row', G.board[TOTAL - 2][9] === 'T',
+       'col9=' + JSON.stringify([G.board[TOTAL-3][9], G.board[TOTAL-2][9], G.board[TOTAL-1][9]]));
+
+    // 4. 队列
+    api.startGame();
+    ok('next: 3 buffered, distinct', G.next.length === 3 && new Set(G.next).size === 3, G.next.join(','));
+
+    // 5. Hold 规则
+    api.startGame();
+    const t1 = G.cur.type;
+    api.holdPiece();
+    ok('hold: stores current', G.hold === t1, G.hold + ' vs ' + t1);
+    const t2 = G.cur.type;
+    api.holdPiece();
+    ok('hold: blocked before lock', G.hold === t1 && G.cur.type === t2, G.hold + '/' + G.cur.type);
+    api.hardDrop(); flush();
+    ok('hold: re-enabled after lock', G.canHold === true, String(G.canHold));
+    const t3 = G.cur.type;
+    api.holdPiece();
+    ok('hold: swap back works', G.cur.type === t1 && G.hold === t3, 'cur=' + G.cur.type + ' hold=' + G.hold);
+
+    // 6. 边界
+    api.startGame();
+    let n = 0; while (api.move(-1) && n++ < 30);
+    const minX = api.cur.x;
+    let m = 0; while (api.move(1) && m++ < 30);
+    const maxX = api.cur.x;
+    ok('walls: piece stays in bounds', minX >= 0 && maxX <= COLS - 1, 'min=' + minX + ' max=' + maxX + ' type=' + api.cur.type);
+
+    // 7. 旋转可逆
+    api.startGame();
+    let gg = 0;
+    while (api.cur.type === 'O' && gg++ < 10) { api.hardDrop(); flush(); }
+    const mat0 = JSON.stringify(api.cur.m);
+    api.tryRotate(1); api.tryRotate(-1);
+    ok('rotate: CW+CCW restores matrix', JSON.stringify(api.cur.m) === mat0, api.cur.type);
+
+    // 8. 顶出：出生行被占满 -> spawn 即判负
+    api.startGame(); clearBoard();
+    fillRow(BUF, []);
+    G.cur = null;
+    api.spawnPiece();
+    ok('topout: spawn blocked -> game over', api.mode === 'over', 'mode=' + api.mode);
+
+    // 8b. 堆到顶部后锁定，下一块出生即撞 -> 结束
+    api.startGame(); clearBoard();
+    for (let r = BUF + 1; r < TOTAL; r++) { for (let c = 4; c <= 7; c++) G.board[r][c] = 'I'; }
+    G.cur = { type: 'I', m: V_I, x: 4, y: -1, n: 4 };
+    api.hardDrop(); flush();
+    ok('topout: stack reaching ceiling ends game', api.mode === 'over', 'mode=' + api.mode);
+
+    // 9. 8 + 4 行 -> level 2
+    api.startGame(); clearBoard();
+    G.lines = 8;
+    for (let i = 1; i <= 4; i++) fillRow(TOTAL - i, [4]);
+    G.cur = { type: 'I', m: V_I, x: 4, y: TOTAL - 5, n: 4 };
+    api.hardDrop(); flush();
+    ok('level: 8+4 lines -> level 2', G.lines === 12 && G.level === 2, 'lines=' + G.lines + ' level=' + G.level);
+
+    // 10. 重力
+    api.startGame();
+    ok('gravity: positive at lv1', G.gravity > 0, 'lv1=' + G.gravity.toFixed(1));
+
+  } catch (e) {
+    R.push('EXCEPTION: ' + (e && e.stack ? e.stack : e));
+  }
+  const fails = R.filter(x => x.indexOf('FAIL') === 0 || x.indexOf('EXCEPTION') === 0).length;
+  document.title = 'ENGINE failures=' + fails + ' / ' + R.length;
+  const pre = document.createElement('pre');
+  pre.textContent = R.join('\n');
+  pre.style.cssText = 'position:fixed;left:6px;top:6px;color:#0f0;font:11px monospace;z-index:9;background:#000c;padding:6px;white-space:pre-wrap;max-width:96%';
+  document.body.appendChild(pre);
+})();
+</script>
+</body>
+</html>
