@@ -2,6 +2,8 @@
 
 一个霓虹发光风格的俄罗斯方块。**单文件 HTML，零依赖，零联网，双击即玩。**
 
+**🎮 在线玩：[wcbsxe.github.io/neon-fall](https://wcbsxe.github.io/neon-fall/)**
+
 ![游戏截图](screenshots/gameplay.png)
 
 ## 直接开玩
